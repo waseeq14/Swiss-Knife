@@ -5,6 +5,13 @@ import dns.resolver
 from bs4 import BeautifulSoup
 import ssl
 import json
+import re
+import time
+from urllib.parse import urljoin, urlparse
+from pattern import SENSITIVE_PATTERNS
+import nmap
+import builtwith
+
 
 def dns_recon(domain, output_file=None):
     output = []
@@ -83,85 +90,14 @@ def technologies_used(url, output_file=None):
     print(f"Technologies used on {url}")
     
     try:
-        response = requests.get(url)
+        technologies = builtwith.parse(url)
     except Exception as e:
-        print(f"Error fetching the URL: {e}")
+        print(f"Error analyzing the URL with builtwith: {e}")
         return
     
-    headers = response.headers
-    output.append(f"Headers: {headers}")
-    
-    # Web servers
-    if 'server' in headers:
-        output.append(f"Web server: {headers['server']}")
-    
-    # Powered by
-    if 'x-powered-by' in headers:
-        output.append(f"Powered by: {headers['x-powered-by']}")
-    
-    # Programming languages and frameworks
-    if 'set-cookie' in headers:
-        cookies = headers['set-cookie']
-        if 'PHPSESSID' in cookies:
-            output.append("Programming language: PHP")
-        if 'ASP.NET_SessionId' in cookies:
-            output.append("Programming language: ASP.NET")
-        if 'JSESSIONID' in cookies:
-            output.append("Programming language: Java")
-        if 'CFID' in cookies or 'CFTOKEN' in cookies:
-            output.append("Programming language: ColdFusion")
-    
-    # CMS detection
-    if 'x-drupal-cache' in headers:
-        output.append("CMS: Drupal")
-    if 'x-generator' in headers and 'WordPress' in headers['x-generator']:
-        output.append("CMS: WordPress")
-    if 'x-joomla-cache' in headers:
-        output.append("CMS: Joomla")
-    if 'x-magento-cache' in headers:
-        output.append("CMS: Magento")
-    
-    # Other technologies
-    if 'x-powered-by' in headers:
-        if 'Express' in headers['x-powered-by']:
-            output.append("Framework: Express.js")
-        if 'Django' in headers['x-powered-by']:
-            output.append("Framework: Django")
-        if 'Ruby on Rails' in headers['x-powered-by']:
-            output.append("Framework: Ruby on Rails")
-        if 'Laravel' in headers['x-powered-by']:
-            output.append("Framework: Laravel")
-    
-    # Frontend frameworks/libraries
-    if 'x-react-server' in headers:
-        output.append("Frontend framework: React")
-    if 'x-vue-server' in headers:
-        output.append("Frontend framework: Vue.js")
-    
-    # Popular cloud services
-    if 'via' in headers and 'cloudfront' in headers['via']:
-        output.append("CDN: AWS CloudFront")
-    if 'x-amz-cf-id' in headers:
-        output.append("CDN: AWS CloudFront")
-    if 'x-azure-ref' in headers:
-        output.append("Cloud service: Azure")
-    if 'x-github-request-id' in headers:
-        output.append("Hosting: GitHub Pages")
-    
-    # Additional heuristics based on content
-    if 'wp-content' in response.text.lower():
-        output.append("CMS: WordPress")
-    if 'sites/default/files' in response.text.lower():
-        output.append("CMS: Drupal")
-    if 'components/com_' in response.text.lower():
-        output.append("CMS: Joomla")
-    if 'mage-cache' in response.text.lower():
-        output.append("CMS: Magento")
-    
-    if 'nginx' in response.text.lower():
-        output.append("Web server: Nginx")
-    if 'apache' in response.text.lower():
-        output.append("Web server: Apache")
+    # Format the output
+    for tech_type, tech_list in technologies.items():
+        output.append(f"{tech_type}: {', '.join(tech_list)}")
     
     if output_file:
         with open(output_file, 'a') as f:
@@ -170,6 +106,7 @@ def technologies_used(url, output_file=None):
     
     for line in output:
         print(line)
+
 
 def subdomain_enum(domain, wordlist, output_file=None):
     output = []
@@ -258,6 +195,233 @@ def list_certificates(domain, output_file=None):
     for line in output:
         print(line)
 
+def read_headers_from_file(header_file):
+    headers_list = []
+    try:
+        with open(header_file, 'r') as file:
+            for line in file:
+                headers = {}
+                line = line.strip().strip('"')
+                if line:
+                    parts = line.split(': ', 1)
+                    if len(parts) == 2:
+                        headers[parts[0]] = parts[1]
+                    elif len(parts) == 1:
+                        headers[parts[0]] = ''
+                    headers_list.append(headers)
+    except Exception as e:
+        print(f"Error reading header file: {e}")
+    return headers_list
+
+
+def perform_403_bypass_tests(url, header_file, output_file=None):
+    headers_list = read_headers_from_file(header_file)
+    results = {}
+    results[url] = {}
+    for headers in headers_list:
+        status_code = test_url(url, headers)
+        if status_code:
+            results[url][str(headers)] = status_code
+    
+    if output_file:
+        with open(output_file, 'a') as file:
+            file.write(json.dumps(results, indent=4) + '\n')
+    
+    print(json.dumps(results, indent=4))
+    return results
+
+def get_banner(ip_or_url, port=None):
+    if not port:
+        port = 80
+
+    if "://" in ip_or_url:
+        ip_or_url = ip_or_url.split("://")[1]
+    
+    try:
+        # Split the URL to extract the host
+        host = ip_or_url.split('/')[0]
+
+        # Create a socket connection
+        with socket.create_connection((host, port), timeout=10) as sock:
+            request = f"HEAD / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+            sock.sendall(request.encode())
+
+            # Receive the response
+            response = sock.recv(4096).decode()
+            
+            # Extract headers from the response
+            headers = {}
+            for line in response.split("\r\n")[1:]:
+                if ": " in line:
+                    key, value = line.split(": ", 1)
+                    headers[key] = value
+
+            return headers
+
+    except socket.gaierror:
+        print(f"Failed to resolve domain: {ip_or_url}")
+        return None
+    except socket.timeout:
+        print(f"Connection to {ip_or_url}:{port} timed out")
+        return None
+    except Exception as e:
+        print(f"Failed to get banner for {ip_or_url}:{port} - {e}")
+        return None
+
+def fetch_page(url):
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        return response.text
+    except requests.RequestException as e:
+        print(f"Failed to fetch {url}: {e}")
+        return None
+
+def find_js_files(base_url, js_files=None):
+    if js_files is None:
+        js_files = set()
+    
+    html_content = fetch_page(base_url)
+    if html_content is None:
+        return js_files
+    
+    soup = BeautifulSoup(html_content, 'lxml')
+    
+    # Find all JS files linked in script tags
+    for script in soup.find_all('script', src=True):
+        src = script['src']
+        if src.endswith('.js'):
+            js_file_url = urljoin(base_url, src)
+            if js_file_url not in js_files:
+                js_files.add(js_file_url)
+                print(f"Found JS file: {js_file_url}")
+
+    # Find all directory links
+    directory_links = [urljoin(base_url, a['href']) for a in soup.find_all('a', href=True)]
+    directory_links = [link for link in directory_links if link.startswith(base_url)]
+    
+    # Recursively find JS files in directories
+    for link in directory_links:
+        if link != base_url:
+            find_js_files(link, js_files)
+    
+    return js_files
+
+def scan_js_file(url):
+    content = fetch_page(url)
+    if content is None:
+        return []
+    
+    sensitive_info = []
+    for pattern in SENSITIVE_PATTERNS:
+        matches = re.findall(pattern, content)
+        sensitive_info.extend(matches)
+    
+    return sensitive_info
+
+def scan_js_files_for_sensitive_info(base_url):
+    print(f"Scanning {base_url} for JS files...")
+    js_files = find_js_files(base_url)
+    
+    if js_files:
+        print("\nScanning JS files for sensitive information...")
+        for js_file in js_files:
+            sensitive_info = scan_js_file(js_file)
+            if sensitive_info:
+                print(f"\nSensitive information found in {js_file}:")
+                for info in sensitive_info:
+                    print(info)
+            else:
+                print(f"No sensitive information found in {js_file}.")
+    else:
+        print("No JS files found.")
+
+def scan_for_vulnerabilities(target, output_file=None):
+    script_path = os.path.join(os.path.expanduser("~"), "nmap/scripts/vulscan/vulscan.nse")
+    
+    nm = nmap.PortScanner()
+    try:
+        print(f"Scanning {target} for vulnerabilities...")
+        nm.scan(target, arguments=f'-sV --script={script_path}')
+        if target in nm.all_hosts():
+            scan_results = nm[target]['tcp']
+            print_scan_results(scan_results, output_file)
+            return scan_results
+        else:
+            print(f"Scan did not return results for {target}.")
+    except Exception as e:
+        print(f"An error occurred: {e}")
+
+def print_scan_results(scan_results, output_file=None):
+    output = []
+    for port in scan_results:
+        result = f"Port: {port}\n"
+        output.append(result)
+        if 'script' in scan_results[port]:
+            result = "Script results:\n"
+            output.append(result)
+            for script in scan_results[port]['script']:
+                result = f"{script}: {scan_results[port]['script'][script]}\n"
+                output.append(result)
+    
+    if output_file:
+        with open(output_file, 'a') as f:
+            for line in output:
+                f.write(line)
+    
+    for line in output:
+        print(line)
+
+
+def scrape_buttons_in_website(url):
+    response = session.get(url)  # send a GET request to the url
+    soup = BeautifulSoup(response.content, 'html.parser')  # extract the html content
+
+    data = str(soup.find_all('a'))  # find all <a> tags
+    matches = []
+
+    # Extract links from the HTML content
+    for match in re.finditer('href="', data):
+        start = match.end()
+        end = data.find('"', start)
+        link = data[start:end]
+
+        if link.startswith('/'):
+            link = url + link
+        elif not link.startswith('http'):
+            link = url + '/' + link
+
+        matches.append(link)
+
+    return matches
+
+def scrape_email_from_website(url, output_file=None):
+    matches = scrape_buttons_in_website(url)
+    emails = set()
+
+    # Iterate through the links and scrape emails
+    for link in matches:
+        try:
+            print(f'Scraping {link}')
+            response = session.get(link)
+            soup = BeautifulSoup(response.content, 'html.parser')
+            email_pattern = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b')
+            found_emails = re.findall(email_pattern, soup.get_text())
+            if found_emails:
+                print(f'Found emails: {found_emails}')
+            emails.update(found_emails)
+        except Exception as e:
+            print(f'Error: {e}')
+            continue
+
+    if output_file:
+        with open(output_file, 'a') as f:
+            for email in emails:
+                f.write(email + '\n')
+    
+    return list(emails)
+
+
 
 def main():
     parser = argparse.ArgumentParser(description="Web Information Gathering Tool")
@@ -265,7 +429,11 @@ def main():
     parser.add_argument('--url', type=str, help='The URL to gather information about')
     parser.add_argument('--wordlist', type=str, help='The wordlist file for sub-domain and directory enumeration')
     parser.add_argument('--inputfile', type=str, help='The file containing URLs to find input fields')
+    parser.add_argument('--headerfile', type=str, help='The file containing headers for 403 bypass testing')
     parser.add_argument('--output', type=str, help='The file to save the output')
+    parser.add_argument('--ip', type=str, help='IP address to get banner information')
+    parser.add_argument('--port', type=int, help='Port to use for banner information')
+
     args = parser.parse_args()
 
     menu = """
@@ -277,7 +445,12 @@ def main():
     5. Directory Enumeration
     6. Listing All Input Fields
     7. Listing Certificates
-    8. Exit
+    8. 403 Bypass Testing
+    9. Web Banner Extraction
+    10. Scan JS Files for Sensitive Information
+    11. Vulnerability Scan
+    12. Email Harvester
+    13. Exit
     """
 
     while True:
@@ -325,6 +498,39 @@ def main():
             else:
                 print("Please provide a domain using --domain option")
         elif choice == '8':
+            if args.url and args.headerfile:
+                perform_403_bypass_tests(args.url, args.headerfile, args.output)
+            else:
+                print("Please provide a URL using --url option and a header file using --headerfile option")
+        elif choice == '9':
+            if args.ip or args.url:
+                banner = get_banner(args.ip or args.url, args.port)
+                if banner:
+                    print(f"Banner for {args.ip or args.url}:{args.port or 80}")
+                    for key, value in banner.items():
+                        print(f"{key}: {value}")
+            else:
+                print("Please provide an IP or URL using --ip or --url option")
+        elif choice == '10':
+            if args.url:
+                scan_js_files_for_sensitive_info(args.url)
+            else:
+                print("Please provide a base URL using --url option")
+        elif choice == '11':
+            if args.ip:
+                scan_for_vulnerabilities(args.ip, args.output)
+            else:
+                print("Please provide an IP address using --ip option")
+        elif choice == '12':
+            if args.url:
+                emails = scrape_email_from_website(args.url, args.output)
+                if emails:
+                    print(f"Emails found: {emails}")
+                else:
+                    print("No emails found.")
+            else:
+                print("Please provide a URL using --url option")
+        elif choice == '13':
             break
         else:
             print("Invalid choice, please try again")
