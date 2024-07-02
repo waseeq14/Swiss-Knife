@@ -1,6 +1,13 @@
 argparse
-beautifulsoup4
-dnspython
-nmap
+socket
 requests
+dnspython
+beautifulsoup4
+pyopenssl
+json
+re
+urllib3
+python-nmap
 builtwith
+textwrap3
+pyfiglet

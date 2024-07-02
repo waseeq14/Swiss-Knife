@@ -11,6 +11,10 @@ from urllib.parse import urljoin, urlparse
 from pattern import SENSITIVE_PATTERNS
 import nmap
 import builtwith
+import os
+import textwrap
+from argparse import RawTextHelpFormatter
+import pyfiglet
 
 
 def dns_recon(domain, output_file=None):
@@ -337,12 +341,10 @@ def scan_js_files_for_sensitive_info(base_url):
         print("No JS files found.")
 
 def scan_for_vulnerabilities(target, output_file=None):
-    script_path = os.path.join(os.path.expanduser("~"), "nmap/scripts/vulscan/vulscan.nse")
-    
     nm = nmap.PortScanner()
     try:
         print(f"Scanning {target} for vulnerabilities...")
-        nm.scan(target, arguments=f'-sV --script={script_path}')
+        nm.scan(target, arguments=f'-sV --script=vulscan/vulscan.nse')
         if target in nm.all_hosts():
             scan_results = nm[target]['tcp']
             print_scan_results(scan_results, output_file)
@@ -374,6 +376,7 @@ def print_scan_results(scan_results, output_file=None):
 
 
 def scrape_buttons_in_website(url):
+    session=requests.Session()
     response = session.get(url)  # send a GET request to the url
     soup = BeautifulSoup(response.content, 'html.parser')  # extract the html content
 
@@ -398,7 +401,7 @@ def scrape_buttons_in_website(url):
 def scrape_email_from_website(url, output_file=None):
     matches = scrape_buttons_in_website(url)
     emails = set()
-
+    session=requests.Session()
     # Iterate through the links and scrape emails
     for link in matches:
         try:
@@ -421,10 +424,70 @@ def scrape_email_from_website(url, output_file=None):
     
     return list(emails)
 
+def crawl_for_documents(url, output_file=None):
+    print(f"Crawling {url} for documents/files...")
+    document_extensions = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv']
+    found_documents = set()
+    
+    def find_documents(base_url, visited_urls=None):
+        if visited_urls is None:
+            visited_urls = set()
+        
+        html_content = fetch_page(base_url)
+        if html_content is None:
+            return found_documents
+        
+        soup = BeautifulSoup(html_content, 'lxml')
+        
+        # Find all links in the page
+        links = [urljoin(base_url, a['href']) for a in soup.find_all('a', href=True)]
+        
+        for link in links:
+            if link in visited_urls:
+                continue
+            visited_urls.add(link)
+            
+            if any(link.endswith(ext) for ext in document_extensions):
+                found_documents.add(link)
+                print(f"Found document: {link}")
+            elif link.startswith(base_url):
+                find_documents(link, visited_urls)
+    
+    find_documents(url)
+    
+    if output_file:
+        with open(output_file, 'a') as f:
+            for doc in found_documents:
+                f.write(doc + '\n')
+    
+    return list(found_documents)
 
+def print_banner():
+    banner = pyfiglet.figlet_format("Swiss Knife")
+    print(banner)
 
 def main():
-    parser = argparse.ArgumentParser(description="Web Information Gathering Tool")
+    print_banner()
+    parser = argparse.ArgumentParser(
+        description="Web Information Gathering Tool",
+        formatter_class=RawTextHelpFormatter,
+        epilog="""\
+Argument requirements for each choice:
+  1. DNS Recon:                   --domain
+  2. Port Scan:                   --domain
+  3. Technologies Used:           --url
+  4. Sub-domain Enumeration:      --domain, --wordlist
+  5. Directory Enumeration:       --url, --wordlist
+  6. Listing All Input Fields:    --inputfile
+  7. Listing Certificates:        --domain
+  8. 403 Bypass Testing:          --url, --headerfile
+  9. Web Banner Extraction:       --ip or --url, --port
+  10. Scan JS Files:              --url
+  11. Vulnerability Scan:         --ip
+  12. Email Harvester:            --url
+  13. Crawl for Documents/Files:  --url
+        """
+    )
     parser.add_argument('--domain', type=str, help='The domain to gather information about')
     parser.add_argument('--url', type=str, help='The URL to gather information about')
     parser.add_argument('--wordlist', type=str, help='The wordlist file for sub-domain and directory enumeration')
@@ -450,7 +513,8 @@ def main():
     10. Scan JS Files for Sensitive Information
     11. Vulnerability Scan
     12. Email Harvester
-    13. Exit
+    13. Crawl for Documents/Files
+    14. Exit
     """
 
     while True:
@@ -531,6 +595,15 @@ def main():
             else:
                 print("Please provide a URL using --url option")
         elif choice == '13':
+            if args.url:
+                documents = crawl_for_documents(args.url, args.output)
+                if documents:
+                    print(f"Documents found: {documents}")
+                else:
+                    print("No documents found.")
+            else:
+                print("Please provide a URL using --url option")
+        elif choice == '14':
             break
         else:
             print("Invalid choice, please try again")
