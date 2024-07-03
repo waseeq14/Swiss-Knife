@@ -44,7 +44,7 @@ Swiss Knife is a comprehensive web information gathering tool designed to facili
 Clone the repository:
 
 ```sh
-git clone https://github.com/yourusername/swiss-knife.git
+git clone https://github.com/waseeq14/Web-Information-Gathering-Command-Line.git
 cd swiss-knife
 ```
 
