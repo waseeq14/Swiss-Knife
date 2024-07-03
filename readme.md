@@ -45,7 +45,7 @@ Clone the repository:
 
 ```sh
 git clone https://github.com/waseeq14/Web-Information-Gathering-Command-Line.git
-cd swiss-knife
+cd Web-Information-Gathering-Command-Line
 ```
 
 Install the required packages:
