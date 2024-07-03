@@ -104,4 +104,4 @@ This command will run the script and allow you to perform the desired operation 
 Contributions are welcome! Please submit a pull request or open an issue to discuss what you would like to change.
 
 ## Note
-setup.sh can be used to download and confifure the nmap **vulscan** script which is necassary for vulnerability scanning.
+setup.sh can be used to download and configure the nmap **vulscan** script which is necassary for vulnerability scanning.
