@@ -59,7 +59,7 @@ pip install -r requirements.txt
 Run the script using Python and follow the interactive menu to select the desired operation:
 
 ```sh
-python swiss_knife.py
+python webInfo.py
 ```
 
 ## Command Line Arguments
