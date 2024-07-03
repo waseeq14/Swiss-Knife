@@ -94,7 +94,7 @@ The following command-line arguments can be used:
 ## Example Usage
 
 ```sh
-python swiss_knife.py --domain example.com --output results.txt
+python webInfo.py --domain example.com --output results.txt
 ```
 
 This command will run the script and allow you to perform the desired operation through the interactive menu.
